@@ -75,6 +75,11 @@ local function InstallTrackingToggle()
 		return
 	end
 	hooksecurefunc(SkuQuest, "CreateQuestSubmenu", function(self, aParent, aQuestID)
+		-- hooksecurefunc cannot be undone, so honouring Sku's Features toggle
+		-- has to happen here, per call -- same guard Menu.lua's MenuBuilder
+		-- hook uses. Without it, disabling this addon still injected the
+		-- tracking entry into Sku's own quest submenu.
+		if NS.SkuQuestNearby and NS.SkuQuestNearby.IsEnabled and not NS.SkuQuestNearby:IsEnabled() then return end
 		if not aParent or not aQuestID then return end
 		local tOk, tErr = pcall(function()
 			-- Resolved fresh on every menu build AND again inside OnAction --

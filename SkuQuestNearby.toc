@@ -4,7 +4,7 @@
 ## Notes-frFR: Ajoute "Objectifs de quêtes proches" dans le menu Quêtes de Sku, à côté de "Quêtes actuelles" et "Base de données des quêtes" -- une liste unique, quêtes en cours + prêtes à rendre mélangées, triées par distance à l'objectif ou au PNJ de livraison, avec le même détail de sous-menu et la même lecture Shift+flèche du bas que les quêtes actuelles. Le détail de chaque quête reçoit aussi "Suivre / Ne plus suivre cette quête" -- ne plus suivre retire aussi ses repères de la minicarte. Toggle depuis Local -> Settings -> Module -> Features. Companion addon, ne fait pas partie de Sku officiel.
 ## Notes-deDE: Fuegt "Nahe Questziele" zu Skus Quest-Menue hinzu, neben "Aktuelle Quests" und "Questdatenbank" -- eine einzige Liste aus laufenden und abgabebereiten Quests, sortiert nach Entfernung zum Ziel bzw. zum Abgabe-NSC, mit demselben Untermenue-Detail und derselben Shift+Pfeil-runter-Ausgabe wie die aktuellen Quests. Jede Questdetailansicht erhaelt zusaetzlich "Quest verfolgen / nicht mehr verfolgen" -- das Abwaehlen entfernt auch ihre Minikartenmarkierungen.
 ## Author: ZenqFR (built with Claude Code)
-## Version: 1.0.0
+## Version: 1.0.1
 ## Dependencies: Sku
 ## SavedVariables: SkuQuestNearbyLog
 

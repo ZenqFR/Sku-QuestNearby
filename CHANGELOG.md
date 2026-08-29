@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.0.1]
+
+### Fixed
+- **Disabling this addon from Sku's Features menu now actually stops it.** Both of this addon's integration points are `hooksecurefunc` hooks, which cannot be unhooked, so honouring the toggle has to happen per call. Neither hook checked: the "Objectifs de quêtes proches" entry kept being injected into Sku's quest menu, and so did the track/untrack row inside every quest submenu. Both now return early when the addon is disabled — the same guard, in both places.
+
 ## [1.0.0] — first public release
 
 First stable release. Previous versions were developed and published iteratively; this is the consolidated 1.0.0.

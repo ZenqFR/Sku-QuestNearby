@@ -184,6 +184,7 @@ local function InstallMenuEntry()
 		return
 	end
 	hooksecurefunc(SkuQuest, "MenuBuilder", function(self, aParentEntry)
+		if NS.SkuQuestNearby and NS.SkuQuestNearby.IsEnabled and not NS.SkuQuestNearby:IsEnabled() then return end
 		if not aParentEntry then return end
 		local tOk, tErr = pcall(function()
 			local tObjectivesEntry = SkuOptions:InjectMenuItems(aParentEntry, { LABEL_OBJECTIVES_ROOT }, SkuGenericMenuItem)
