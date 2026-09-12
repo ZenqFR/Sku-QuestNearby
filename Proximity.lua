@@ -121,7 +121,15 @@ local function GetSpawnDistance(aCtx, aTargetType, aTargetId)
 	end
 	if not tSpawns then return nil end
 
-	local tBest
+	-- [2026-08-29] Now also returns the WORLD COORDINATES of the winning
+	-- spawn, not just its distance. They were already computed here and then
+	-- thrown away; Beacon.lua needs them to place a SkuBeacon, and they are
+	-- in exactly the space SkuBeacon expects -- the same one UnitPosition
+	-- ("player") reports, which is why SkuNav.Geo:Distance can compare them
+	-- against aCtx.playerX/Y directly two lines below. Returned as extra
+	-- values so every existing caller that only reads the distance is
+	-- unaffected.
+	local tBest, tBestX, tBestY
 	for tAreaId, tAreaSpawns in pairs(tSpawns) do
 		local tSpawnX, tSpawnY = tAreaSpawns and tAreaSpawns[1] and tAreaSpawns[1][1], tAreaSpawns and tAreaSpawns[1] and tAreaSpawns[1][2]
 		if tSpawnX and tSpawnX ~= -1 and tSpawnY and tSpawnY ~= -1 then
@@ -135,14 +143,16 @@ local function GetSpawnDistance(aCtx, aTargetType, aTargetId)
 						local tX, tY = tWorldPos:GetXY()
 						if tX then
 							local tDist = SkuNav.Geo:Distance(aCtx.playerX, aCtx.playerY, tX, tY)
-							if tDist and (not tBest or tDist < tBest) then tBest = tDist end
+							if tDist and (not tBest or tDist < tBest) then
+								tBest, tBestX, tBestY = tDist, tX, tY
+							end
 						end
 					end
 				end
 			end
 		end
 	end
-	return tBest
+	return tBest, tBestX, tBestY
 end
 
 -- Item objectives ("collect N of X") don't have a spawn location of their
@@ -154,18 +164,20 @@ end
 local function ResolveItemDistance(aCtx, aItemId)
 	local tItemData = SkuDB.itemDataTBC and SkuDB.itemDataTBC[aItemId]
 	if not tItemData then return nil end
-	local tBest
+	local tBest, tBestX, tBestY
 	local function tConsider(aType, aIds)
 		if not aIds then return end
 		for _, tId in ipairs(aIds) do
-			local tDist = GetSpawnDistance(aCtx, aType, tId)
-			if tDist and (not tBest or tDist < tBest) then tBest = tDist end
+			local tDist, tX, tY = GetSpawnDistance(aCtx, aType, tId)
+			if tDist and (not tBest or tDist < tBest) then
+				tBest, tBestX, tBestY = tDist, tX, tY
+			end
 		end
 	end
 	tConsider("object", tItemData[SkuDB.itemKeys["objectDrops"]])
 	tConsider("creature", tItemData[SkuDB.itemKeys["npcDrops"]])
 	tConsider("creature", tItemData[SkuDB.itemKeys["vendors"]])
-	return tBest
+	return tBest, tBestX, tBestY
 end
 
 -- Resolves the CLOSEST distance across every target SkuQuest:GetQuestTargetIds
@@ -184,17 +196,25 @@ local function ResolveClosestDistance(aCtx, aQuestID, aSubTable)
 	if not tTargetType then return nil, "GetQuestTargetIds resolved no targetType" end
 	if not tTargets or #tTargets == 0 then return nil, "targetType='" .. tostring(tTargetType) .. "' but 0 target ids" end
 
-	local tBest
+	-- [2026-08-29] Returns (distance, reason, worldX, worldY). The coordinates
+	-- are appended AFTER the existing two returns so callers that only read
+	-- (distance, reason) keep working untouched.
+	local tBest, tBestX, tBestY
 	for _, tTargetId in ipairs(tTargets) do
-		local tDist = (tTargetType == "item") and ResolveItemDistance(aCtx, tTargetId) or GetSpawnDistance(aCtx, tTargetType, tTargetId)
+		local tDist, tX, tY
+		if tTargetType == "item" then
+			tDist, tX, tY = ResolveItemDistance(aCtx, tTargetId)
+		else
+			tDist, tX, tY = GetSpawnDistance(aCtx, tTargetType, tTargetId)
+		end
 		if tDist and (not tBest or tDist < tBest) then
-			tBest = tDist
+			tBest, tBestX, tBestY = tDist, tX, tY
 		end
 	end
 	if not tBest then
 		return nil, string.format("targetType='%s', %d target id(s), none resolved to a same-continent spawn", tTargetType, #tTargets)
 	end
-	return tBest, nil
+	return tBest, nil, tBestX, tBestY
 end
 NS.ResolveClosestDistance = ResolveClosestDistance
 
@@ -212,21 +232,51 @@ NS.ResolveClosestDistance = ResolveClosestDistance
 -- doesn't know about (logged, not errored -- data coverage gaps must
 -- degrade gracefully, same principle as every other addon in this family).
 local function ScanQuestObjectives(aCtx)
+	do local tHub = LibStub and LibStub("SkuZenqAddons-1.0", true); if tHub and tHub.Mark then tHub:Mark("SkuQuestNearby: ScanQuestObjectives") end end
 	local tList = {}
+	-- Counted so the log can say WHICH source answered. When the two sources
+	-- disagree the difference is almost always "SkuDB cannot skip a finished
+	-- objective", and knowing the mix is the fastest way to confirm that.
+	local tFromQuestie, tFromSkuDB = 0, 0
 	local tNumEntries = GetNumQuestLogEntries() or 0
 	for tQuestLogID = 1, tNumEntries do
 		local tTitle, tLevel, tSuggestedGroup, tIsHeader, tIsCollapsed, tIsComplete, tFrequency, tQuestID =
 			GetQuestLogTitle(tQuestLogID)
 		if not tIsHeader and tQuestID and tQuestID > 0 then
 			local tOk, tErr = pcall(function()
-				local tData = SkuDB.questDataTBC[tQuestID]
-				if not tData then
-					Log("ScanQuestObjectives: questID=%d ('%s') not in SkuDB, skipped.", tQuestID, tostring(tTitle))
-					return
-				end
 				local tReady = (tIsComplete == 1)
-				local tSubTable = tReady and tData[SkuDB.questKeys["finishedBy"]] or tData[SkuDB.questKeys["objectives"]]
-				local tDist, tWhy = ResolveClosestDistance(aCtx, tQuestID, tSubTable)
+				local tDist, tWhy, tWorldX, tWorldY
+				-- Hoisted: the quest-giver fallback further down needs it too,
+				-- and it must stay in scope whichever branch below ran.
+				local tData = SkuDB.questDataTBC[tQuestID]
+
+				-- [2026-08-29] QUESTIE FIRST. Reported: this list said 400m for a
+				-- quest whose turn-in was 10m away and which was not finished --
+				-- two different answers for the same quest from the same addon,
+				-- because the beacon had been moved onto Questie while this list
+				-- still read SkuDB. SkuDB is STATIC quest data: it lists every
+				-- objective a quest has ever had and cannot tell which ones you
+				-- already finished, so it can point at work that is already done.
+				-- Questie tracks live progress. Both features now ask the same
+				-- resolver, so they can no longer disagree.
+				local tQDist, tQx, tQy = NS.ResolveQuestStopViaQuestie
+					and NS.ResolveQuestStopViaQuestie(aCtx, tQuestID, tReady)
+				if tQDist then
+					tDist, tWorldX, tWorldY = tQDist, tQx, tQy
+					tFromQuestie = tFromQuestie + 1
+				else
+					tFromSkuDB = tFromSkuDB + 1
+					-- SkuDB fallback, used only when Questie is absent or still
+					-- loading. Its inability to skip completed objectives is the
+					-- known limitation; it is better than no distance at all.
+					if not tData then
+						Log("ScanQuestObjectives: questID=%d ('%s') not in SkuDB and Questie gave nothing (%s), skipped.",
+							tQuestID, tostring(tTitle), tostring(tQx))
+						return
+					end
+					local tSubTable = tReady and tData[SkuDB.questKeys["finishedBy"]] or tData[SkuDB.questKeys["objectives"]]
+					tDist, tWhy, tWorldX, tWorldY = ResolveClosestDistance(aCtx, tQuestID, tSubTable)
+				end
 				-- [2026-08-19] "Je veux qu'à chaque fois la distance soit
 				-- affichée" -- when the objective itself can't be resolved at
 				-- all (a pure "return to NPC" quest with no separate kill/
@@ -239,11 +289,13 @@ local function ScanQuestObjectives(aCtx)
 				-- complete quests -- finishedBy is already the primary
 				-- source there, nothing left to fall back to.
 				local tUsedFallback = false
-				if not tDist and not tReady then
-					local tFallbackDist, tFallbackWhy = ResolveClosestDistance(aCtx, tQuestID, tData[SkuDB.questKeys["startedBy"]])
+				if not tDist and not tReady and tData then
+					local tFallbackDist, tFallbackWhy, tFallbackX, tFallbackY = ResolveClosestDistance(aCtx, tQuestID, tData[SkuDB.questKeys["startedBy"]])
 					if tFallbackDist then
 						tDist = tFallbackDist
+						tWorldX, tWorldY = tFallbackX, tFallbackY
 						tUsedFallback = true
+						Log("ScanQuestObjectives: questID=%d ('%s') NOT complete but no objective position found -- showing the QUEST GIVER instead (often the same NPC as the turn-in). Reason: %s", tQuestID, tostring(tTitle), tostring(tWhy))
 						tWhy = "objective unresolved (" .. tostring(tWhy) .. "), used quest-giver fallback"
 					else
 						tWhy = tostring(tWhy) .. "; quest-giver fallback also failed (" .. tostring(tFallbackWhy) .. ")"
@@ -268,13 +320,16 @@ local function ScanQuestObjectives(aCtx)
 				-- comment above. distance (shown/spoken) stays the true value;
 				-- sortDistance (sort key only) is the one with the penalty.
 				local tSortDistance = tUsedFallback and (tDistance + FALLBACK_SORT_PENALTY) or tDistance
-				table.insert(tList, { questId = tQuestID, title = tTitle, level = tLevel, distance = tDistance, sortDistance = tSortDistance, ready = tReady, usedGiverFallback = tUsedFallback })
+				-- worldX/worldY are nil whenever the position could not be
+				-- resolved at all; Beacon.lua treats "no coordinates" as "not a
+				-- candidate" rather than guessing a position.
+				table.insert(tList, { questId = tQuestID, title = tTitle, level = tLevel, distance = tDistance, sortDistance = tSortDistance, ready = tReady, usedGiverFallback = tUsedFallback, worldX = tWorldX, worldY = tWorldY })
 			end)
 			if not tOk then Log("ScanQuestObjectives: questID=%d THREW: %s", tQuestID, tostring(tErr)) end
 		end
 	end
 	table.sort(tList, function(a, b) return a.sortDistance < b.sortDistance end)
-	Log("ScanQuestObjectives: %d quest(s) total.", #tList)
+	Log("ScanQuestObjectives: %d quest(s) total -- %d via Questie, %d via SkuDB fallback.", #tList, tFromQuestie, tFromSkuDB)
 	return tList
 end
 NS.ScanQuestObjectives = ScanQuestObjectives

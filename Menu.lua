@@ -42,7 +42,7 @@
 -- Sku's own quest menu.
 local ADDON_NAME, NS = ...
 if NS.SkuMissing then return end
-local Log, DifficultyLabel = NS.Log, NS.DifficultyLabel
+local Log, DifficultyLabel, Announce = NS.Log, NS.DifficultyLabel, NS.Announce
 local UNKNOWN_DISTANCE = NS.UNKNOWN_DISTANCE
 
 local LABEL_OBJECTIVE = Sku.deEn and Sku.deEn("Ziel", "objective", "objectif") or "objectif"
@@ -178,6 +178,65 @@ local function BuildObjectivesChildren(aParent)
 	end
 end
 
+---------------------------------------------------------------------------------------------------------------------------------------
+-- [2026-08-29] Quest beacon submenu. Kept to four plain actions rather than a
+-- settings tree: the sound set and volume are deliberately NOT duplicated here
+-- -- the beacon reuses whatever the player already configured for Sku's own
+-- navigation beacons (SkuNav), so there is exactly one place to tune how a
+-- beacon sounds instead of two that can disagree.
+local LABEL_BEACON_ROOT = Sku.deEn and Sku.deEn("Questbake", "Quest beacon", "Balise de quête") or "Balise de quête"
+
+local function BuildBeaconChildren(aParent)
+	local tRunning = NS.BeaconIsRunning and NS.BeaconIsRunning()
+	local tToggleLabel = tRunning
+		and (Sku.deEn and Sku.deEn("Bake ausschalten", "Turn beacon off", "Éteindre la balise") or "Éteindre la balise")
+		or (Sku.deEn and Sku.deEn("Bake einschalten", "Turn beacon on", "Allumer la balise") or "Allumer la balise")
+
+	local tToggle = SkuOptions:InjectMenuItems(aParent, { tToggleLabel }, SkuGenericMenuItem)
+	tToggle.OnAction = function() pcall(NS.ToggleBeacon) end
+
+	local tWhere = SkuOptions:InjectMenuItems(aParent, {
+		Sku.deEn and Sku.deEn("Aktuelles Ziel ansagen", "Announce current target", "Annoncer la cible actuelle") or "Annoncer la cible actuelle"
+	}, SkuGenericMenuItem)
+	tWhere.OnAction = function() pcall(NS.AnnounceBeaconDistance) end
+
+	local tTurn = SkuOptions:InjectMenuItems(aParent, {
+		Sku.deEn and Sku.deEn("Zum Ziel drehen", "Turn to target", "Se tourner vers la cible") or "Se tourner vers la cible"
+	}, SkuGenericMenuItem)
+	tTurn.OnAction = function() pcall(NS.TurnToBeaconTarget) end
+
+	-- Both keys get their own rebind + reset row. Built from one table rather
+	-- than four hand-written entries so a third binding, if one ever appears,
+	-- is one line here.
+	local tRows = {
+		{ which = "toggle",   label = Sku.deEn and Sku.deEn("Taste: an/aus", "Key: on/off", "Touche : marche/arrêt") or "Touche : marche/arrêt" },
+		{ which = "turn",     label = Sku.deEn and Sku.deEn("Taste: drehen", "Key: turn", "Touche : se tourner") or "Touche : se tourner" },
+		{ which = "distance", label = Sku.deEn and Sku.deEn("Taste: Entfernung", "Key: distance", "Touche : distance") or "Touche : distance" },
+	}
+	for _, tRow in ipairs(tRows) do
+		local tKey = NS.GetConfiguredBeaconKey and NS.GetConfiguredBeaconKey(tRow.which) or "?"
+		local tRebind = SkuOptions:InjectMenuItems(aParent, { tRow.label .. " : " .. tKey }, SkuGenericMenuItem)
+		tRebind.OnAction = function()
+			if not NS.CaptureBeaconKey then return end
+			NS.CaptureBeaconKey(tRow.which, function(aNewKey)
+				if aNewKey then
+					Announce((Sku.deEn and Sku.deEn("Neue Taste", "New key", "Nouvelle touche") or "Nouvelle touche") .. " " .. aNewKey)
+				end
+			end)
+		end
+
+		local tReset = SkuOptions:InjectMenuItems(aParent, {
+			(Sku.deEn and Sku.deEn("Standard", "Default", "Par défaut") or "Par défaut") .. " : " .. tRow.label
+		}, SkuGenericMenuItem)
+		tReset.OnAction = function()
+			if not NS.ResetBeaconKey then return end
+			local tDefault = NS.ResetBeaconKey(tRow.which)
+			Announce((Sku.deEn and Sku.deEn("Standardtaste", "Default key", "Touche par défaut") or "Touche par défaut") .. " " .. tostring(tDefault))
+		end
+	end
+end
+
+---------------------------------------------------------------------------------------------------------------------------------------
 local function InstallMenuEntry()
 	if not SkuQuest.MenuBuilder then
 		Log("InstallMenuEntry: SkuQuest:MenuBuilder does not exist, skipped.")
@@ -191,6 +250,13 @@ local function InstallMenuEntry()
 			tObjectivesEntry.dynamic = true
 			tObjectivesEntry.sorting = true
 			tObjectivesEntry.BuildChildren = function(self2) BuildObjectivesChildren(self2) end
+
+			-- [2026-08-29] Quest beacon (Beacon.lua). Sits next to the objective
+			-- list because it answers the same question -- "where do I go next"
+			-- -- just continuously and by ear instead of as a list to read.
+			local tBeaconEntry = SkuOptions:InjectMenuItems(aParentEntry, { LABEL_BEACON_ROOT }, SkuGenericMenuItem)
+			tBeaconEntry.dynamic = true
+			tBeaconEntry.BuildChildren = function(self2) BuildBeaconChildren(self2) end
 		end)
 		if not tOk then Log("InstallMenuEntry hook: THREW: %s", tostring(tErr)) end
 	end)
